@@ -1,0 +1,200 @@
+---
+title: "data preparation"
+output: html_notebook
+---
+
+```{r}
+library(xml2)
+library(tidyverse)
+library(data.table)
+
+mutation_dir = "../data/mutation"
+tgtXMLFiles = list.files(
+  path=mutation_dir, pattern="\\.xml$", all.files = T, full.names = T
+)
+tgtCSVFiles = list.files(
+  path=mutation_dir, pattern=".*foundation.*\\.csv$", 
+  all.files = T, full.names = T, ignore.case = T
+)
+
+file.annotation <- read_delim(
+  sprintf("%s/info.txt", mutation_dir), delim="\t",
+  col_types="cc"
+) %>% rename(sbjid=`#id`)
+```
+# read XML files
+```{r}
+parseSCRUM <- function(fn){
+  doc <- xml2::read_xml(fn)
+  n0 <- as.list(xml2::xml_attrs(xml_find_first(doc, "/vr:variant-report")))
+  
+  erbb2 <- xml2::xml_attrs(xml_find_first(
+    doc,
+    "/vr:variant-report/copy-number-alterations/copy-number-alteration[@gene = 'ERBB2']"
+  ))
+  erbb2 <- ifelse(is.na(erbb2), list(), erbb2)
+  
+  list(
+    filename = gsub(pattern="^.*/", replacement = "", fn),
+    disease = n0[["disease"]],
+    specimen_id = n0[["specimen-id"]],
+    gender=n0[["gender"]],
+    study=n0[["study"]],
+    test_request=n0[["test-request"]],
+    test_type=n0[["test-type"]],
+    #erbb2=erbb2,
+    copy_number = erbb2[["copy-number"]],
+    equivocal = erbb2[["equivocal"]],
+    cna_type = erbb2[["type"]]
+  )
+}
+
+df.xml <- Reduce(
+  f=function(ret, v){bind_rows(ret, parseSCRUM(v))}, 
+  init=data.frame(c()), 
+  x=tgtXMLFiles
+) %>% left_join(file.annotation, by="filename")
+
+```
+
+
+# read foundationOne csv files
+```{r}
+parseFoundationOne <- function(fn){
+  #df <- readr::read_delim(file=fn, delim = "|", col_types = "c")
+  df <- fread(file=fn, sep="|")
+  tmp <- df %>% filter(GENE=="ERBB2") %>%
+    filter(`VARIANT-TYPE` == "copy-number-alteration") %>%
+    summarize(
+      erbb2_amp = dplyr::first(`CNA-COPY-NUMBER`),
+      erbb2_cna_type = dplyr::first(`CNA-TYPE`),
+      erbb2_cna_exons = dplyr::first(`CNA-EXONS`),
+      erbb2_cna_ratio = dplyr::first(`CNA-RATIO`)
+    )
+    
+
+  #return(df)  
+  list(
+    test_request = df[["FMI ID"]][1],
+    Gender = df[["Gender"]][1],
+    Sample_type = df[["Sample type/matrix"]][1],
+    Diagnosis = df[["Diagnosis"]][1],
+    Stage = df[["Cancer Stage"]][1],
+    Accession_number = df[["Accession number"]][1],
+    trial = df[["Trial ID"]][1],
+    visit = df[["Visit Description"]][1],
+    erbb2_amp = tmp[["erbb2_amp"]],
+    erbb2_cna_type = tmp[["erbb2_cna_type"]],
+    erbb2_cna_exons = tmp[["erbb2_cna_exons"]],
+    erbb2_cna_ratio = tmp[["erbb2_cna_ratio"]],
+    filename=gsub("^.*/", "", fn)
+    
+  )
+}
+
+df.csv <- Reduce(
+  f=function(ret, v){bind_rows(ret, parseFoundationOne(v))}, 
+  init=data.frame(c()), 
+  x=tgtCSVFiles
+) %>% 
+  left_join(file.annotation, by="filename") %>%
+  mutate(
+    Diagnosis=ifelse(
+      Diagnosis=="Esohpageal Cancer", "Esophageal Cancer", Diagnosis)
+    )
+
+
+```
+
+## consistency check for sbjid
+```{r}
+df.csv %>% 
+  group_by(Accession_number == sbjid) %>%
+  summarize(n=n(), .groups="drop")
+
+df.csv %>%
+  group_by(Accession_number == sbjid, visit) %>%
+  summarize(n=n(), .groups="drop")
+  
+```
+
+
+
+# merge xml/csv
+```{r}
+df.merged <- df.xml %>%
+  mutate(cna_type = ifelse(is.na(cna_type), "-", cna_type)) %>%
+  full_join(
+    df.csv %>% mutate(
+      erbb2_cna_type = ifelse(is.na(erbb2_cna_type), "-", erbb2_cna_type)
+    ), 
+    by="test_request"
+  ) %>%
+  mutate(
+    sbjid=ifelse(is.na(sbjid.x), sbjid.y, sbjid.x),
+    t1=ifelse(is.na(cna_type), "-", cna_type),
+    t2=ifelse(is.na(erbb2_cna_type), "-", erbb2_cna_type)
+  ) %>%
+  mutate(amp = ifelse(t1=="amplification" | t2=="amplification", "Y", "N")) %>%
+  select(-c(t1, t2))
+
+  
+```
+
+## consistency check
+```{r}
+df.merged %>%
+  group_by(test_type, Sample_type) %>%
+  summarize(n=n(), .groups="drop")
+
+df.merged %>%
+  group_by(test_type, visit) %>%
+  summarize(n=n(), .groups="drop")
+
+df.merged %>%
+  group_by(cna_type, erbb2_cna_type) %>%
+  summarize(n=n(), .groups="drop")
+
+df.merged %>%
+  group_by(disease, Diagnosis) %>%
+  summarize(n=n(), .groups="drop")
+
+df.merged %>%
+  group_by(sbjid.x == sbjid.y, visit) %>%
+  summarize(n=n(), .groups="drop")
+  
+```
+#count HER2 amp
+
+```{r}
+df.amp <- df.merged %>%
+  mutate(
+    her2amp = amp
+  ) %>% select(
+    sbjid, visit, her2amp, disease, Diagnosis, Sample_type, test_type
+  ) %>%
+  # filter(visit != "Post Treatment") %>%
+  filter(her2amp != "NA") %>%
+  # filter(Sample_type == "Tissue"| test_type == "FoundationOne") %>%
+  group_by(sbjid) %>%
+  summarize(
+    visit = paste(unique(visit), collapse=","),
+    amp = paste(sort(unique(her2amp, na.rm=T)), collapse=","),
+    disease = paste(unique(sort(disease)), collapse=","),
+    Diagnosis = paste(sort(unique(Diagnosis, na.rm=T)), collapse = ",")
+  )
+
+df.amp %>% 
+  group_by(amp, disease) %>%
+  summarize(n=n(), .groups="drop") %>%
+  pivot_wider(names_from = amp, values_from = n, values_fill = 0) %>%
+  arrange(-Y)
+  
+```
+
+
+# save datasets
+```{r}
+save(df.amp, df.csv, df.xml, df.merged, file.annotation, file="../output/01-datasets.RData")
+```
+

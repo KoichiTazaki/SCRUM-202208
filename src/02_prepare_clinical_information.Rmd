@@ -1,0 +1,34 @@
+---
+title: "Read clinical annotations"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+clinical_dir = "../data/clinical/en"
+```
+
+# read clinical annotations
+```{r}
+xa <- read_csv(
+  file=sprintf("%s/XA.csv", clinical_dir), skip=1, show_col_types=FALSE
+) %>%
+  filter(is.na(`response assessment original result`)==FALSE) %>%
+  select(`unique subject identifier`, 
+         `category for response assessment`,
+         `response assessment original result`
+  )  %>%
+  pivot_wider(
+    names_from = `category for response assessment`,
+    values_from = `response assessment original result`
+  ) %>%
+  rename_all(function(x){gsub(" +", "_", x)}) %>%
+  mutate(sbjid = gsub("^(MONSTAR|LC-SCRUM)-", "", unique_subject_identifier))
+
+```
+
+
+# save
+```{r}
+save(xa, file = "../output/02-datasets.RData")
+```

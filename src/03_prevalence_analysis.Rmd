@@ -1,0 +1,51 @@
+---
+title: "prevalences"
+output: html_notebook
+---
+
+
+```{r}
+library(tidyverse)
+```
+
+
+```{r}
+load("../output/01-datasets.RData")
+load("../output/02-datasets.RData")
+```
+
+# join clinical and mutations
+```{r}
+df <- xa %>% inner_join(df.merged, by ="sbjid")
+```
+
+## analysis
+```{r}
+df %>%
+  select(sbjid, amp, location, disease, Diagnosis) %>%
+  mutate(location=gsub("cancer.*", "cancer", location)) %>%
+  group_by(sbjid, disease) %>%
+  summarize(
+    amp = paste(sort(unique(amp, na.rm=T)), collapse=", "), 
+    .groups="drop"
+  ) %>%
+  ungroup() %>%
+  mutate(amp = ifelse(amp=="N, Y", "Y", amp)) %>%
+  group_by(disease, amp) %>%
+  summarize(n=n_distinct(sbjid), .groups="drop") %>%
+  pivot_wider(names_from = amp, values_from = n, values_fill = 0) %>%
+  mutate(tot = N + Y) %>%
+  arrange(-Y) 
+```
+
+```{r}
+df %>%
+  mutate(Diagnosis = gsub("cancer.*", "cancer", Diagnosis, ignore.case = T)) %>%
+  mutate(location = gsub("(cancer|tumor).*", "\\1", location, ignore.case = T)) %>%
+  group_by(location, disease) %>%
+  summarize(n=n(), .groups="drop") %>%
+  ungroup() %>%
+  group_by(location) %>%
+  filter(is.na(location)==F) %>%
+  summarize(disease = paste(sort(unique(disease, na.rm=T)), collapse=","))
+```

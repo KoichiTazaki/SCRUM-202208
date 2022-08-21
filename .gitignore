@@ -259,3 +259,7 @@ scratch/
 Scratch.*
 
 data/
+.Rproj.user
+output/*.RData
+
+.local/

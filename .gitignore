@@ -262,4 +262,6 @@ data/
 .Rproj.user
 output/*.RData
 
+src/*.html
+
 .local/

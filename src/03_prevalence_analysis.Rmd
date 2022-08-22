@@ -6,6 +6,7 @@ output: html_notebook
 
 ```{r}
 library(tidyverse)
+library(ggplot2)
 ```
 
 
@@ -16,36 +17,102 @@ load("../output/02-datasets.RData")
 
 # join clinical and mutations
 ```{r}
-df <- xa %>% inner_join(df.merged, by ="sbjid")
+df <- df.merged %>%
+  left_join(xa, by="sbjid")
 ```
 
 ## analysis
 ```{r}
-df %>%
+df.plot <- df %>%
+  filter(regexpr("^MONS.*", unique_subject_identifier)>=0) %>%
   select(sbjid, amp, location, disease, Diagnosis) %>%
+  mutate(Diagnosis = tolower((Diagnosis))) %>%
+  mutate(Diagnosis = gsub("^(gi|genitourinary|gynecologic) *", "", Diagnosis)) %>%
+  mutate(Diagnosis = gsub(" */ *", "/", Diagnosis)) %>%
+  mutate(Diagnosis = gsub(".*(gist|gastro *intestinal * stromal * tumor).*$", "gist",  Diagnosis, ignore.case = T)) %>%
+  mutate(Diagnosis = gsub("billiary", "biliary", Diagnosis)) %>%
+  mutate(Diagnosis = gsub("^.*head & neck cancer", "head & neck cancer", Diagnosis)) %>%
+  mutate(Diagnosis = gsub("breast breast", "breast ", Diagnosis)) %>%
+  mutate(Diagnosis = gsub("colorectcal", "colorectal", Diagnosis)) %>%
+  mutate(Diagnosis = gsub(" *\\(please.*\\) *", "", Diagnosis)) %>%
+  mutate(Diagnosis = gsub("head *(and|&) *neck.*", "head & neck cancer", Diagnosis)) %>%
+  mutate(Diagnosis = gsub(".*endometrial *cancer *carcinosarcoma.*", "endometrial cancer", Diagnosis)) %>%
+  mutate(Diagnosis = gsub("hepa?tocell.r", "hepatocellular", Diagnosis)) %>%
+  mutate(Diagnosis = gsub("^.*other.*", "other", Diagnosis)) %>%
+  mutate(Diagnosis = gsub("^.*skin *melanoma.*$", "melanoma", Diagnosis)) %>%
+  mutate(Diagnosis = gsub("ovarian carcinoma", "ovarian cancer", Diagnosis)) %>%
+  mutate(Diagnosis = gsub("pa.?creatic (cancer|carcinoma)", "pancreatic carcinoma", Diagnosis)) %>%
+  mutate(Diagnosis = gsub("renal cell carcinoma", "renal cell cancer", Diagnosis)) %>%
+  mutate(Diagnosis = gsub("small intestine cancer", "small intestinal cancer", Diagnosis)) %>%
+  
+  mutate(Diagnosis = gsub("tumor carcinoma", "tumor/carcinoma", Diagnosis)) %>%
+  mutate(Diagnosis = gsub(" *\\(.*\\) *$", "", Diagnosis)) %>%  
+  mutate(Diagnosis = gsub(" +", " ", Diagnosis)) %>%
+  mutate(Diagnosis = gsub(" caner$", " cancer", Diagnosis)) %>%
   mutate(location=gsub("cancer.*", "cancer", location)) %>%
-  group_by(sbjid, disease) %>%
+  group_by(sbjid, Diagnosis) %>%
   summarize(
     amp = paste(sort(unique(amp, na.rm=T)), collapse=", "), 
     .groups="drop"
   ) %>%
   ungroup() %>%
   mutate(amp = ifelse(amp=="N, Y", "Y", amp)) %>%
-  group_by(disease, amp) %>%
+  group_by(Diagnosis, amp) %>%
   summarize(n=n_distinct(sbjid), .groups="drop") %>%
   pivot_wider(names_from = amp, values_from = n, values_fill = 0) %>%
-  mutate(tot = N + Y) %>%
-  arrange(-Y) 
+  mutate(tot = N + Y) 
+#  filter(tot >= 10) %>%
+#  arrange(N/tot) 
 ```
 
 ```{r}
-df %>%
-  mutate(Diagnosis = gsub("cancer.*", "cancer", Diagnosis, ignore.case = T)) %>%
-  mutate(location = gsub("(cancer|tumor).*", "\\1", location, ignore.case = T)) %>%
-  group_by(location, disease) %>%
-  summarize(n=n(), .groups="drop") %>%
-  ungroup() %>%
-  group_by(location) %>%
-  filter(is.na(location)==F) %>%
-  summarize(disease = paste(sort(unique(disease, na.rm=T)), collapse=","))
+plot.fig1 <- function(tbl){
+  tmp <- tbl %>% filter(tot>20) %>% select(Diagnosis, Y, N) %>%
+    pivot_longer(
+      cols=c(Y, N), names_to="amp", values_to = "subjects"
+    ) %>%
+    mutate(
+      Diagnosis = gsub(" [^ ]+ *$", "", Diagnosis)
+  )
+
+    g <- ggplot2::ggplot(tmp, aes(x = Diagnosis, y = subjects, fill = amp))
+  
+  g <- g + geom_bar(stat = "identity")
+  g <- g + theme(
+    axis.text.x = element_text(angle = 30, vjust = 0.5, hjust=1),
+    axis.title.x = element_text(margin = margin(t = 20))
+  )
+  g <- g + ggtitle("HER2 amp prevalences in MONSTAR")
+  show(g)
+}
+
+plot.fig2 <- function(tbl){
+  tmp <- tbl %>% filter(tot>20) %>% select(Diagnosis, Y, N) %>%
+    pivot_longer(cols=c(Y, N), names_to="amp", values_to = "subjects") %>%
+    mutate(Diagnosis = gsub(" [^ ]+ *$", "", Diagnosis))
+  g <- ggplot2::ggplot(tmp, aes(x = Diagnosis, y = subjects, fill = amp))
+  g <- g + geom_bar(stat = "identity", position="fill")
+  g <- g + theme(
+    axis.text.x = element_text(angle = 30, vjust = 0.5, hjust=1),
+    axis.title.x = element_text(margin = margin(t = 20))
+  )
+  g <- g + ylab("ratio")
+  g <- g + ggtitle("HER2 amp prevalences in MONSTAR")
+  show(g)
+}
+
+
+```
+
+```{r}
+plot.fig1(df.plot)
+plot.fig2(df.plot)
+```
+
+
+```{r}
+df.plot %>% 
+  filter(tot>=10) %>%
+  arrange(N/tot) %>%
+  head(n=10)
 ```

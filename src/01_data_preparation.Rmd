@@ -24,7 +24,7 @@ file.annotation <- read_delim(
 ```
 # read XML files
 ```{r}
-parseSCRUM <- function(fn){
+parseMONSTAR <- function(fn){
   doc <- xml2::read_xml(fn)
   n0 <- as.list(xml2::xml_attrs(xml_find_first(doc, "/vr:variant-report")))
   
@@ -50,12 +50,60 @@ parseSCRUM <- function(fn){
 }
 
 df.xml <- Reduce(
-  f=function(ret, v){bind_rows(ret, parseSCRUM(v))}, 
+  f=function(ret, v){bind_rows(ret, parseMONSTAR(v))}, 
   init=data.frame(c()), 
   x=tgtXMLFiles
 ) %>% left_join(file.annotation, by="filename")
 
 ```
+
+# LC-SCRUM
+```{r}
+tgtLCSCRUMFiles = list.files(path=mutation_dir, pattern=".*DNA.*SO.*oncomine.*tsv$", full.names = T)
+parseOncomine <- function(fn){
+  ret <- read_delim(
+    fn, delim="\t", 
+    comment = "#",
+    show_col_types = FALSE,
+    progress = FALSE,
+    col_types = cols(
+      rowtype="c",
+      call="c",
+      FILTER="c",
+      `FUNC1.gene`= "c",
+      ID="c",
+      `FORMAT.1.CN` = "d",
+      .default = col_skip()
+    )
+  ) %>% filter(
+    FILTER=="PASS" & rowtype=="CNV" & call != "NEG" & `FUNC1.gene` == "ERBB2"
+  )
+  
+  list(
+    filename = gsub(pattern="^.*/", replacement = "", fn),
+    disease = "lung cancer",
+    specimen_id = "not specified",
+    gender="not specified",
+    study="LC-SCRUM 3",
+    test_request="not specified",
+    test_type="oncomine",
+    #erbb2=erbb2,
+    copy_number = ret[["FORMAT.1.CN"]][1],
+    equivocal = NA,
+    cna_type = ret[["call"]][1]
+  )
+}
+
+df.lcscrum <- Reduce(
+  f=function(ret, v){bind_rows(ret, parseOncomine(v))}, 
+  init=data.frame(c()), 
+  x=tgtLCSCRUMFiles
+) %>% 
+  left_join(file.annotation, by="filename")
+
+#parseOncomine(tgtLCSCRUMFiles[1])
+```
+
 
 
 # read foundationOne csv files
@@ -119,6 +167,13 @@ df.csv %>%
 ```
 
 
+```{r}
+df.lcscrum %>% 
+  mutate(`Accession number` = gsub("^[^_]*_([^_]+)_.*$", "\\1", filename)) %>%
+  select(`Accession number`, filename) %>%
+  head(n=5)
+```
+
 
 # merge xml/csv
 ```{r}
@@ -132,11 +187,28 @@ df.merged <- df.xml %>%
   ) %>%
   mutate(
     sbjid=ifelse(is.na(sbjid.x), sbjid.y, sbjid.x),
+  ) %>%
+  bind_rows(
+    df.lcscrum %>% 
+      mutate(
+        Sample_type = "Tissue",
+        `Accession number` = gsub("^[^_]*_([^_]+)_.*$", "\\1", filename),
+        disease = "LUNG",
+        Diagnosis = "lung cancer",
+        Sample_type = "Tissue",
+        visit = "Archival",  # Need caution is it true?
+        cna_type = ifelse(cna_type=="AMP", "amplification", cna_type)
+      ) %>%
+      select(sbjid, Sample_type, Diagnosis, disease, cna_type, Sample_type, visit)
+  ) %>%
+  mutate(
     t1=ifelse(is.na(cna_type), "-", cna_type),
     t2=ifelse(is.na(erbb2_cna_type), "-", erbb2_cna_type)
   ) %>%
   mutate(amp = ifelse(t1=="amplification" | t2=="amplification", "Y", "N")) %>%
   select(-c(t1, t2))
+
+  
 
   
 ```
@@ -164,6 +236,7 @@ df.merged %>%
   summarize(n=n(), .groups="drop")
   
 ```
+
 #count HER2 amp
 
 ```{r}
@@ -193,8 +266,10 @@ df.amp %>%
 ```
 
 
+
+
 # save datasets
 ```{r}
-save(df.amp, df.csv, df.xml, df.merged, file.annotation, file="../output/01-datasets.RData")
+save(df.amp, df.csv, df.xml, df.lcscrum, df.merged, file.annotation, file="../output/01-datasets.RData")
 ```
 

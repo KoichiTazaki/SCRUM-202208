@@ -22,11 +22,29 @@ xa <- read_csv(
     names_from = `category for response assessment`,
     values_from = `response assessment original result`
   ) %>%
+  left_join(
+    read_csv(
+      file=sprintf("%s/XA.csv", clinical_dir), skip=1, show_col_types=FALSE
+    ) %>% 
+      filter(
+        is.na('histological type') == FALSE
+      ) %>% 
+      select('unique subject identifier', 'histological type'),
+    by = "unique subject identifier"
+  ) %>%
   rename_all(function(x){gsub(" +", "_", x)}) %>%
   mutate(sbjid = gsub("^(MONSTAR|LC-SCRUM)-", "", unique_subject_identifier))
 
 ```
 
+```{r}
+read_csv(
+  file=sprintf("%s/XA.csv", clinical_dir), skip=1, show_col_types=FALSE
+) %>% filter(
+  `unique subject identifier` == "LC-SCRUM-SCJ-082-08010-A"
+)
+
+```
 
 # save
 ```{r}

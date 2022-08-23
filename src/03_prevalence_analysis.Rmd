@@ -24,7 +24,8 @@ df <- df.merged %>%
 ## analysis
 ```{r}
 df.plot <- df %>%
-  filter(regexpr("^MONS.*", unique_subject_identifier)>=0) %>%
+  filter(Sample_type=="Tissue" & visit == "Archival") %>%
+  # filter(regexpr("^MONS.*", unique_subject_identifier)>=0) %>%
   select(sbjid, amp, location, disease, Diagnosis) %>%
   mutate(Diagnosis = tolower((Diagnosis))) %>%
   mutate(Diagnosis = gsub("^(gi|genitourinary|gynecologic) *", "", Diagnosis)) %>%
@@ -66,14 +67,15 @@ df.plot <- df %>%
 ```
 
 ```{r}
-plot.fig1 <- function(tbl){
-  tmp <- tbl %>% filter(tot>20) %>% select(Diagnosis, Y, N) %>%
+plot.fig1b <- function(tbl){
+  tgt <- tbl %>% filter(tot > 20)
+  order <- (tbl %>% arrange(N/tot))$Diagnosis
+
+  tmp <- tgt %>% select(Diagnosis, Y, N) %>%
     pivot_longer(
       cols=c(Y, N), names_to="amp", values_to = "subjects"
     ) %>%
-    mutate(
-      Diagnosis = gsub(" [^ ]+ *$", "", Diagnosis)
-  )
+    mutate(Diagnosis = factor(Diagnosis, levels = order))
 
     g <- ggplot2::ggplot(tmp, aes(x = Diagnosis, y = subjects, fill = amp))
   
@@ -82,14 +84,38 @@ plot.fig1 <- function(tbl){
     axis.text.x = element_text(angle = 30, vjust = 0.5, hjust=1),
     axis.title.x = element_text(margin = margin(t = 20))
   )
-  g <- g + ggtitle("HER2 amp prevalences in MONSTAR")
+  g <- g + ggtitle("HER2 amp prevalences in MONSTAR + LC-SCRUM")
+  show(g)
+}
+
+plot.fig1 <- function(tbl){
+  tgt <- tbl %>% filter(tot > 20 & Diagnosis  != "lung cancer")
+  order <- (tbl %>% arrange(N/tot))$Diagnosis
+
+  tmp <- tgt %>% select(Diagnosis, Y, N) %>%
+    pivot_longer(
+      cols=c(Y, N), names_to="amp", values_to = "subjects"
+    ) %>%
+    mutate(Diagnosis = factor(Diagnosis, levels = order))
+
+    g <- ggplot2::ggplot(tmp, aes(x = Diagnosis, y = subjects, fill = amp))
+  
+  g <- g + geom_bar(stat = "identity")
+  g <- g + theme(
+    axis.text.x = element_text(angle = 30, vjust = 0.5, hjust=1),
+    axis.title.x = element_text(margin = margin(t = 20))
+  )
+  g <- g + ggtitle("HER2 amp prevalences in MONSTAR only")
   show(g)
 }
 
 plot.fig2 <- function(tbl){
-  tmp <- tbl %>% filter(tot>20) %>% select(Diagnosis, Y, N) %>%
+  tgt <- tbl %>% filter(tot > 20)
+  order <- (tbl %>% arrange(N/tot))$Diagnosis
+  
+  tmp <- tgt %>% select(Diagnosis, Y, N) %>%
     pivot_longer(cols=c(Y, N), names_to="amp", values_to = "subjects") %>%
-    mutate(Diagnosis = gsub(" [^ ]+ *$", "", Diagnosis))
+    mutate(Diagnosis = factor(Diagnosis, levels = order))
   g <- ggplot2::ggplot(tmp, aes(x = Diagnosis, y = subjects, fill = amp))
   g <- g + geom_bar(stat = "identity", position="fill")
   g <- g + theme(
@@ -97,7 +123,7 @@ plot.fig2 <- function(tbl){
     axis.title.x = element_text(margin = margin(t = 20))
   )
   g <- g + ylab("ratio")
-  g <- g + ggtitle("HER2 amp prevalences in MONSTAR")
+  g <- g + ggtitle("HER2 amp prevalences in MONSTAR + LC SCRUM")
   show(g)
 }
 
@@ -105,7 +131,13 @@ plot.fig2 <- function(tbl){
 ```
 
 ```{r}
+df.plot %>% filter(regexpr("lung", Diagnosis, ignore.case = T)>=0) 
+```
+
+
+```{r}
 plot.fig1(df.plot)
+plot.fig1b(df.plot)
 plot.fig2(df.plot)
 ```
 
@@ -115,4 +147,18 @@ df.plot %>%
   filter(tot>=10) %>%
   arrange(N/tot) %>%
   head(n=10)
+```
+
+```{r}
+df %>% 
+  group_by(visit) %>% 
+  summarize(n=n_distinct(sbjid), .groups="drop") %>%
+  arrange(visit)
+```
+```{r}
+df %>% 
+  mutate(trial = gsub("National Cancer Center Hospital East", "NCCE", trial)) %>%
+  group_by(test_type, Sample_type, trial) %>% 
+  summarize(n=n_distinct(sbjid), .groups="drop") %>%
+  arrange(trial)
 ```

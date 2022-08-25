@@ -1,0 +1,217 @@
+---
+title: "SCRUM 1-2"
+output: html_notebook
+---
+
+# process SCRUM 1-2
+```{r}
+library(tidyverse)
+library(data.table)
+data_dir = "../data/1-2"
+load("../output/sample.patient.RData")
+seq.files <- c(list.files(path = paste(data_dir, "genome/GI-SCREEN-CRC", sep = "/"), pattern = ".tsv", full.names = T),
+               list.files(path = paste(data_dir, "genome/GI-SCREEN-NonCRC", sep = "/"), pattern = ".tsv", full.names = T),
+               list.files(path = paste(data_dir, "genome/LCSCRUM", sep = "/"), pattern = ".tsv", full.names = T));
+
+```
+## read sample annotation
+```{r}
+read_scrum12_sampleinformation <- function(folder=data_dir){
+  tmp.lc <- read_delim(
+    sprintf("%s/clinical/LCSCRUM/PatientInfo.csv", folder), 
+    locale = locale(encoding = "cp932"),
+    show_col_types = F, delim=","
+  ) %>% select(REGNO, PATHDX) %>% 
+    rename(Diagnosis=PATHDX) %>%
+    group_by(Diagnosis) %>%
+    mutate(Diagnosis = ifelse(
+      test = is.na(Diagnosis), 
+      yes = "lung",
+      no = ifelse(
+        test = Diagnosis=="扁平上皮癌",
+        yes = "lung squamous",
+        no = ifelse(Diagnosis=="非扁平上皮・非小細胞癌", "NSCLC", Diagnosis)
+      )
+    )) %>%
+    select(REGNO, Diagnosis) %>%
+    unique() %>%
+    arrange(REGNO)
+  
+  tmp.crc <- read_delim(
+    sprintf("%s/clinical/GI-SCREEN-CRC/SAMPLE.csv", folder), show_col_types = "F", delim=",",
+    skip=1
+  ) %>% 
+    mutate(Diagnosis="colo rectal") %>%
+    select(REGNO, Diagnosis) %>% unique() %>%
+    arrange(REGNO) 
+  
+  tmp <- read_delim(
+    sprintf("%s/clinical/GI-SCREEN-NonCRC/SAMPLE.csv", folder), show_col_types = "F", delim=",",
+    skip=1
+  ) 
+
+  tmp.noncrc <- tmp %>% group_by(REGNO) %>% summarize(n_samples = n(), .groups="drop") %>% ungroup() %>%
+    left_join(
+      tmp %>% 
+        select(REGNO,matches("^LBSITE.*PRIM$")) %>%
+        pivot_longer(cols = !REGNO, names_to="LBSITE", values_drop_na=T) %>%
+        group_by(REGNO) %>%
+        summarize(
+          site = paste(sort(unique(value, na.rm=T)), collapse=", "),
+          LBSITE = paste(sort(unique(LBSITE, na.rm=T)), collapse=", ")
+        ),
+      by="REGNO"
+    ) %>%
+    mutate(site = ifelse(LBSITE=="LBSITE_GCPRIM", "gastric", site)) %>%
+    mutate(site = ifelse(LBSITE=="LBSITE_GISTPRIM", "gist", site)) %>%
+    mutate(site = ifelse(LBSITE=="LBSITE_PANPRIM", "pancreatic", site)) %>%
+    mutate(site = ifelse(LBSITE=="LBSITE_ESOPRIM", "esophageal", site)) %>%
+    mutate(site = ifelse(LBSITE=="LBSITE_BTPRIM", "billary", site)) %>%
+    mutate(site = ifelse(LBSITE=="LBSITE_HCPRIM",  "hepatocellular", site)) %>%
+    mutate(site = ifelse(LBSITE=="LBSITE_NEUROPRIM", "neuroendocrine", site)) %>%
+    mutate(site = gsub("^十二.*$", "duodenum", site)) %>%
+    mutate(site = gsub("^(虫垂|空腸|小腸|回腸|肛門|その).*$", "others", site)) %>%
+    select(REGNO, site) %>% rename(Diagnosis=site) %>% unique() %>%
+    arrange(REGNO)
+  
+  tmp.lc %>% bind_rows(tmp.crc) %>% bind_rows(tmp.noncrc)
+}
+regno2dx <- read_scrum12_sampleinformation()
+```
+
+
+## 
+```{r}
+get_mutation <- function(genes){
+  Reduce(f = function(sum, fn){
+    tmp <- read_delim(
+      file = fn, delim="\t", show_col_types = F, col_types=cols(.default="c"), progress = F
+    ) %>%
+      mutate(file = gsub("^.*/", "", fn))
+
+    mutations <- tmp %>%
+      filter(FUNC1.gene %in% genes) %>%
+      filter(PANEL %in% c("OCP", "OCA")) %>%
+      filter(call != "NEG") %>%
+      mutate(
+        FUNC1.oncomineGeneClass = ifelse(
+          "FUNC1.oncomineGeneClass" %in% names(.), FUNC1.oncomineGeneClass, NA
+        ),
+        FUNC1.oncomineVariantClass = ifelse(
+          "FUNC1.oncomineVariantClass" %in% names(.), FUNC1.oncomineVariantClass, NA
+        ),
+        FUNC1.function = ifelse(
+          "FUNC1.function" %in% names(.), FUNC1.function, NA
+        ),
+        FUNC1.location = ifelse(
+          "FUNC1.location" %in% names(.), FUNC1.location, NA
+        ),
+        FUNC1.exon = ifelse(
+          "FUNC1.exon" %in% names(.), FUNC1.exon, NA
+        ), 
+        FUNC1.coding = ifelse(
+          "FUNC1.coding" %in% names(.), FUNC1.coding, NA
+        ), 
+        FUNC1.protein = ifelse(
+          "FUNC1.protein" %in% names(.), FUNC1.protein, NA
+        )
+      ) %>%
+      select(
+        `#REGNO`, PANEL, rowtype, CHROM, POS, REF, ALT, QUAL, FUNC1.function, 
+        FUNC1.location, FUNC1.exon, FUNC1.coding, FUNC1.protein, 
+        FUNC1.oncomineGeneClass, FUNC1.oncomineVariantClass, file
+      )
+    #ifelse(
+    #  nrow(mutations)>0, 
+    #  sum %>% bind_rows(mutations %>% select(1)),  
+    #  #sum %>% bind_rows(tmp %>% head(n=1) %>% select(`#REGNO`, file)),
+    #  sum %>% bind_rows(mutations %>% select(1))
+    #)
+    if(nrow(mutations)>0){
+      return(sum %>% bind_rows(mutations))
+    } else {
+      return(sum %>% bind_rows(tmp %>% head(n=1) %>% select(`#REGNO`, file)))
+    }
+  }, 
+  x = seq.files, 
+  init = data.frame(list(`#REGNO`= NULL))
+  )
+  
+}
+
+
+```
+
+
+
+## take long time
+```{r}
+#HER2.mutation <- get_mutation("ERBB2") 
+#save(HER2.mutation, file="../output/her2.mutation.RData")
+load("../output/her2.mutation.RData")
+```
+
+
+```{r}
+
+plot.fig2a <- function(her2amp, r2d){
+  df.amp <- her2amp %>% rename(REGNO = `#REGNO`) %>%
+    left_join(r2d, by = "REGNO") %>%
+    filter(rowtype=="CNV" | is.na(rowtype)) %>%
+    mutate(amp = ifelse(is.na(rowtype), "N", "Y")) %>%
+    select(REGNO, amp, Diagnosis) %>%
+    group_by(Diagnosis, amp) %>%
+    summarize(n=n_distinct(REGNO), .groups="drop") 
+  
+  tmp <- (
+    df.amp %>% 
+      pivot_wider(names_from = amp, values_from = n, values_fill=0) %>%
+      mutate(tot=Y+N) %>%
+      arrange(N/tot)
+  )$Diagnosis
+
+  df.amp %>%
+    mutate(Diagnosis = factor(Diagnosis, levels = tmp)) %>%
+    ggplot(aes(x = Diagnosis, y = n, fill=amp)) +
+    geom_bar(stat = "identity") + 
+    theme(
+      axis.text.x = element_text(angle = 30, vjust = 0.5, hjust=1),
+      axis.title.x = element_text(margin = margin(t = 20))
+    ) + 
+    ggtitle("HER2 amp prevalences in SCRUM-Japan 1/2") +
+    ylab("# Patients")
+}
+
+plot.fig2b <- function(her2amp, r2d){
+  df.amp <- her2amp %>% rename(REGNO = `#REGNO`) %>%
+    left_join(r2d, by = "REGNO") %>%
+    filter(rowtype=="CNV" | is.na(rowtype)) %>%
+    mutate(amp = ifelse(is.na(rowtype), "N", "Y")) %>%
+    select(REGNO, amp, Diagnosis) %>%
+    group_by(Diagnosis, amp) %>%
+    summarize(n=n_distinct(REGNO), .groups="drop") 
+  
+  tmp <- (
+    df.amp %>% 
+      pivot_wider(names_from = amp, values_from = n, values_fill=0) %>%
+      mutate(tot=Y+N) %>%
+      arrange(N/tot)
+  )$Diagnosis
+
+  df.amp %>%
+    mutate(Diagnosis = factor(Diagnosis, levels = tmp)) %>%
+    ggplot(aes(x = Diagnosis, y = n, fill=amp)) +
+    geom_bar(stat = "identity", position = "fill") + 
+    theme(
+      axis.text.x = element_text(angle = 30, vjust = 0.5, hjust=1),
+      axis.title.x = element_text(margin = margin(t = 20))
+    ) + 
+    ggtitle("HER2 amp prevalences in SCRUM-Japan 1/2") +
+    ylab("# Ratio")
+}
+
+
+plot.fig2a(HER2.mutation, regno2dx)
+plot.fig2b(HER2.mutation, regno2dx)
+
+```

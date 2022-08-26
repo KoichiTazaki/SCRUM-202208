@@ -254,6 +254,8 @@ t.py
 tt.rb
 tt.scala
 tt.py
+.Rhistory
+.RData
 
 scratch/
 Scratch.*
